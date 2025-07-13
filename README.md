@@ -74,6 +74,23 @@ docker build -t idokep-to-wunderground .
 docker run -d --name idokep-to-wunderground --env-file .env idokep-to-wunderground
 ```
 
+### Docker Compose használata
+
+A projekt tartalmaz egy `docker-compose.yml` fájlt, amely megkönnyíti a konténer kezelését:
+
+```bash
+# Konténer indítása
+docker-compose up -d
+
+# Konténer leállítása
+docker-compose down
+
+# Konténer naplók megtekintése
+docker-compose logs -f
+```
+
+A Docker Compose automatikusan létrehoz egy `logs` mappát, ahol a naplófájlok tárolódnak, és beállítja a budapesti időzónát.
+
 ## Cron használata
 
 Ha inkább cron job-ot szeretne használni az időzített futtatáshoz, adja hozzá a következő sort a crontab-hoz:

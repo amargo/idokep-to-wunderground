@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  idokep-to-wunderground:
+    image: ghcr.io/amargo/idokep-to-wunderground:latest
+    container_name: idokep-to-wunderground
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - TZ=Europe/Budapest
