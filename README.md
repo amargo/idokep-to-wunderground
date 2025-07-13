@@ -62,6 +62,9 @@ python src/main.py --once --idokep-location Budapest --scan-interval 3600
 
 ## Docker használata
 
+[![Docker Image](https://github.com/amargo/idokep-to-wunderground/actions/workflows/ci.yml/badge.svg)](https://github.com/amargo/idokep-to-wunderground/pkgs/container/idokep-to-wunderground)
+[![Docker Hub](https://img.shields.io/docker/v/gszoboszlai/idokep-to-wunderground?label=Docker%20Hub)](https://hub.docker.com/r/gszoboszlai/idokep-to-wunderground)
+
 ### Docker image építése
 
 ```bash
