@@ -25,12 +25,19 @@ def setup_logging():
     
     # Configure logging
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    # Ensure logs directory exists
+    import os
+    logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    os.makedirs(logs_dir, exist_ok=True)
+    log_file = os.path.join(logs_dir, 'idokep_to_wunderground.log')
+    
     logging.basicConfig(
         level=logging.INFO,
         format=log_format,
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler('idokep_to_wunderground.log', encoding='utf-8')
+            logging.FileHandler(log_file, encoding='utf-8')
         ]
     )
     
