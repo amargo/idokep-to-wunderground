@@ -26,19 +26,24 @@ def setup_logging():
     # Configure logging
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     
-    # Ensure logs directory exists
-    import os
-    logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
-    os.makedirs(logs_dir, exist_ok=True)
-    log_file = os.path.join(logs_dir, 'idokep_to_wunderground.log')
+    # Create handlers
+    handlers = [logging.StreamHandler()]
+    
+    # Try to add file handler, but continue if it fails
+    try:
+        import os
+        logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file = os.path.join(logs_dir, 'idokep_to_wunderground.log')
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        handlers.append(file_handler)
+    except Exception as e:
+        print(f"Warning: Could not set up log file: {e}")
     
     logging.basicConfig(
         level=logging.INFO,
         format=log_format,
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_file, encoding='utf-8')
-        ]
+        handlers=handlers
     )
     
     return logging.getLogger()
