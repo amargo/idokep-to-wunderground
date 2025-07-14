@@ -2,7 +2,7 @@ version: '3'
 
 services:
   idokep-to-wunderground:
-    image: ghcr.io/amargo/idokep-to-wunderground:latest
+    image: ghcr.io/amargo/idokep-to-wunderground:main
     container_name: idokep-to-wunderground
     restart: unless-stopped
     env_file:
@@ -11,3 +11,4 @@ services:
       - ./logs:/app/logs
     environment:
       - TZ=Europe/Budapest
+      - PYTHONIOENCODING=utf-8

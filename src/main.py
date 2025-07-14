@@ -11,6 +11,7 @@ import schedule
 from dotenv import load_dotenv
 
 from idokep_scraper import IdokepScraper
+from idokep_automata_scraper import IdokepAutomataScraper
 from wunderground_client import WundergroundClient
 
 def setup_logging():
@@ -58,14 +59,19 @@ def load_config():
         'wunderground_id': os.getenv('WUNDERGROUND_ID'),
         'wunderground_key': os.getenv('WUNDERGROUND_KEY'),
         'idokep_location': os.getenv('IDOKEP_LOCATION'),
+        'idokep_automata_id': os.getenv('IDOKEP_AUTOMATA_ID'),
+        'use_automata': os.getenv('USE_AUTOMATA', 'false').lower() == 'true',
         'scan_interval': int(os.getenv('SCAN_INTERVAL', 900))
     }
 
     # Validate required configuration
     missing_keys = []
-    for key in ['wunderground_id', 'wunderground_key', 'idokep_location']:
+    for key in ['wunderground_id', 'wunderground_key']:
         if not config.get(key):
             missing_keys.append(key)
+    
+    if not config.get('idokep_location') and not (config.get('use_automata') and config.get('idokep_automata_id')):
+        missing_keys.append('idokep_location or idokep_automata_id with use_automata=true')
 
     if missing_keys:
         raise ValueError(f"Missing required configuration: {', '.join(missing_keys)}")
@@ -82,12 +88,22 @@ def update_weather_data():
         # Load configuration
         config = load_config()
 
-        # Initialize scraper and client
-        scraper = IdokepScraper(config['idokep_location'])
+        # Initialize client
         client = WundergroundClient(config['wunderground_id'], config['wunderground_key'])
-
-        # Scrape weather data
-        weather_data = scraper.scrape()
+        
+        # Determine which scraper to use
+        weather_data = None
+        if config.get('use_automata') and config.get('idokep_automata_id'):
+            logger.info(f"Using IdőKép automata scraper with ID: {config['idokep_automata_id']}")
+            scraper = IdokepAutomataScraper(config['idokep_automata_id'])
+            weather_data = scraper.scrape()
+        elif config.get('idokep_location'):
+            logger.info(f"Using regular IdőKép scraper with location: {config['idokep_location']}")
+            scraper = IdokepScraper(config['idokep_location'])
+            weather_data = scraper.scrape()
+        else:
+            logger.error("No valid scraper configuration found")
+            return
 
         if weather_data:
             # Send data to Weather Underground
@@ -141,6 +157,8 @@ def parse_arguments():
     parser.add_argument('--wunderground-id', help='Weather Underground station ID')
     parser.add_argument('--wunderground-key', help='Weather Underground API key')
     parser.add_argument('--idokep-location', help='IdőKép location (e.g., Velence)')
+    parser.add_argument('--idokep-automata-id', help='IdőKép automata ID (e.g., fejnto)')
+    parser.add_argument('--use-automata', action='store_true', help='Use IdőKép automata data instead of regular IdőKép data')
     parser.add_argument('--scan-interval', type=int, help='Scan interval in seconds')
     
     return parser.parse_args()
@@ -167,6 +185,14 @@ def update_config_from_args(config, args):
     if args.idokep_location:
         config['idokep_location'] = args.idokep_location
         logger.info(f"Using IdőKép location from command line: {args.idokep_location}")
+    
+    if args.idokep_automata_id:
+        config['idokep_automata_id'] = args.idokep_automata_id
+        logger.info(f"Using IdőKép automata ID from command line: {args.idokep_automata_id}")
+    
+    if args.use_automata:
+        config['use_automata'] = True
+        logger.info("Using IdőKép automata data instead of regular IdőKép data")
         
     if args.scan_interval:
         config['scan_interval'] = args.scan_interval
