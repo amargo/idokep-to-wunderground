@@ -51,42 +51,67 @@ def setup_logging():
 
 logger = setup_logging()
 
-def load_config():
-    """Load configuration from .env file."""
+def _parse_bool(value, name):
+    """Parse a human-friendly boolean environment value."""
+    normalized = str(value).strip().lower()
+    if normalized in {'1', 'true', 'yes', 'on'}:
+        return True
+    if normalized in {'0', 'false', 'no', 'off', ''}:
+        return False
+    raise ValueError(f"Invalid boolean value for {name}: {value}")
+
+
+def validate_config(config):
+    """Validate the finalized configuration after CLI overrides are applied."""
+    missing_keys = []
+    for key in ['wunderground_id', 'wunderground_key']:
+        if not config.get(key):
+            missing_keys.append(key)
+
+    if config.get('scan_interval', 0) <= 0:
+        raise ValueError("scan_interval must be greater than zero")
+
+    if not config.get('idokep_location') and not (
+        config.get('use_automata') and config.get('idokep_automata_id')
+    ):
+        missing_keys.append('idokep_location or idokep_automata_id with use_automata=true')
+
+    if missing_keys:
+        raise ValueError(f"Missing required configuration: {', '.join(missing_keys)}")
+
+
+def load_config(validate=True):
+    """Load configuration from the environment and optional .env file."""
     load_dotenv()
+
+    try:
+        scan_interval = int(os.getenv('SCAN_INTERVAL', '900').strip())
+    except ValueError as e:
+        raise ValueError("SCAN_INTERVAL must be an integer") from e
 
     config = {
         'wunderground_id': os.getenv('WUNDERGROUND_ID'),
         'wunderground_key': os.getenv('WUNDERGROUND_KEY'),
         'idokep_location': os.getenv('IDOKEP_LOCATION'),
         'idokep_automata_id': os.getenv('IDOKEP_AUTOMATA_ID'),
-        'use_automata': os.getenv('USE_AUTOMATA', 'false').lower() == 'true',
-        'scan_interval': int(os.getenv('SCAN_INTERVAL', 900))
+        'use_automata': _parse_bool(os.getenv('USE_AUTOMATA', 'false'), 'USE_AUTOMATA'),
+        'scan_interval': scan_interval
     }
 
-    # Validate required configuration
-    missing_keys = []
-    for key in ['wunderground_id', 'wunderground_key']:
-        if not config.get(key):
-            missing_keys.append(key)
-    
-    if not config.get('idokep_location') and not (config.get('use_automata') and config.get('idokep_automata_id')):
-        missing_keys.append('idokep_location or idokep_automata_id with use_automata=true')
-
-    if missing_keys:
-        raise ValueError(f"Missing required configuration: {', '.join(missing_keys)}")
+    if validate:
+        validate_config(config)
 
     return config
 
-def update_weather_data():
+def update_weather_data(config=None):
     """
     Main function to scrape IdőKép and send data to Weather Underground.
     """
     try:
         logger.info("Starting weather data update")
 
-        # Load configuration
-        config = load_config()
+        # Reuse the finalized configuration so CLI overrides are effective.
+        config = config or load_config()
 
         # Initialize client
         client = WundergroundClient(config['wunderground_id'], config['wunderground_key'])
@@ -103,22 +128,26 @@ def update_weather_data():
             weather_data = scraper.scrape()
         else:
             logger.error("No valid scraper configuration found")
-            return
+            return False
 
         if weather_data:
             # Send data to Weather Underground
             success = client.send_data(weather_data)
             if success:
                 logger.info("Weather data successfully updated")
+                return True
             else:
                 logger.error("Failed to send weather data to Weather Underground")
+                return False
         else:
             logger.error("Failed to scrape weather data from IdőKép")
+            return False
 
     except Exception as e:
         logger.exception(f"Error in update_weather_data: {e}")
+        return False
 
-def run_scheduler(interval):
+def run_scheduler(interval, config):
     """
     Run the scheduler to update weather data at specified intervals.
 
@@ -128,20 +157,20 @@ def run_scheduler(interval):
     logger.info(f"Starting scheduler with {interval} seconds interval")
 
     # Schedule the update job
-    schedule.every(interval).seconds.do(update_weather_data)
+    schedule.every(interval).seconds.do(update_weather_data, config)
 
     # Run the update immediately once
-    update_weather_data()
+    update_weather_data(config)
 
     # Keep the scheduler running
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-def run_once():
+def run_once(config):
     """Run the update once without scheduling."""
     logger.info("Running one-time update")
-    update_weather_data()
+    return update_weather_data(config)
 
 def parse_arguments():
     """
@@ -194,7 +223,7 @@ def update_config_from_args(config, args):
         config['use_automata'] = True
         logger.info("Using IdőKép automata data instead of regular IdőKép data")
         
-    if args.scan_interval:
+    if args.scan_interval is not None:
         config['scan_interval'] = args.scan_interval
         logger.info(f"Using scan interval from command line: {args.scan_interval} seconds")
         
@@ -207,21 +236,23 @@ if __name__ == "__main__":
         # Parse command line arguments
         args = parse_arguments()
         
-        # Load configuration from .env
-        config = load_config()
+        # Load raw configuration, apply CLI overrides, then validate once.
+        config = load_config(validate=False)
         
         # Update configuration with command line arguments if provided
         config = update_config_from_args(config, args)
+        validate_config(config)
         
         # Check if this is a one-time run (via command line arg or env var)
         run_once_mode = args.once or os.getenv('RUN_ONCE', 'false').lower() == 'true'
         
         if run_once_mode:
             logger.info("Running in one-time mode")
-            run_once()
+            if not run_once(config):
+                exit(1)
         else:
             # Run with scheduler
-            run_scheduler(config['scan_interval'])
+            run_scheduler(config['scan_interval'], config)
 
     except Exception as e:
         logger.exception(f"Application error: {e}")

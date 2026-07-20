@@ -4,6 +4,8 @@ IdőKép Scraper Module
 This module is responsible for scraping weather data from IdőKép website.
 """
 import logging
+import re
+from urllib.parse import quote
 import requests
 from bs4 import BeautifulSoup
 
@@ -21,8 +23,8 @@ class IdokepScraper:
         Args:
             location (str): The location to get weather data for (e.g., 'Velence')
         """
-        self.location = location
-        self.url = f"{self.BASE_URL}/{location}"
+        self.location = location.strip()
+        self.url = f"{self.BASE_URL}/{quote(self.location, safe='')}"
         
     def _extract_temperature(self, soup):
         """
@@ -38,10 +40,13 @@ class IdokepScraper:
         if not temp_element:
             return None
             
-        temp_text = temp_element.text.strip()
+        temp_text = temp_element.get_text(" ", strip=True)
         try:
-            # Remove the degree symbol and convert to float
-            temperature = float(temp_text.replace('˚C', '').strip())
+            # Időkép currently uses ℃, but older pages used °C or ˚C.
+            match = re.search(r"[-+]?\d+(?:[.,]\d+)?", temp_text)
+            if not match:
+                raise ValueError
+            temperature = float(match.group(0).replace(',', '.'))
             logger.info(f"Found temperature: {temperature}°C")
             return temperature
         except ValueError:
@@ -63,9 +68,9 @@ class IdokepScraper:
             return None
             
         try:
-            lake_temp_parts = lake_temp_text.strip().split(':')
-            if len(lake_temp_parts) > 1:
-                lake_temp = float(lake_temp_parts[1].replace('°C', '').strip())
+            match = re.search(r"[-+]?\d+(?:[.,]\d+)?", lake_temp_text)
+            if match:
+                lake_temp = float(match.group(0).replace(',', '.'))
                 logger.info(f"Found lake temperature: {lake_temp}°C")
                 return lake_temp
         except ValueError:
@@ -106,27 +111,6 @@ class IdokepScraper:
             return alert
         return None
     
-    def _estimate_humidity(self, condition):
-        """
-        Estimate humidity based on weather condition.
-        
-        Args:
-            condition (str): Weather condition text
-            
-        Returns:
-            int: Estimated humidity percentage or None
-        """
-        if not condition:
-            return None
-            
-        if 'eső' in condition.lower() or 'zivatar' in condition.lower():
-            return 80  # Estimate high humidity during rain/storms
-        elif 'felhős' in condition.lower():
-            return 60  # Estimate moderate humidity when cloudy
-        elif 'napos' in condition.lower():
-            return 40  # Estimate lower humidity when sunny
-        return None
-    
     def scrape(self):
         """
         Scrape weather data from IdőKép.
@@ -146,7 +130,8 @@ class IdokepScraper:
             lake_temp = self._extract_lake_temperature(soup)
             condition = self._extract_condition(soup)
             alert = self._extract_alert(soup)
-            humidity = self._estimate_humidity(condition)
+            # The regular page does not expose measured relative humidity.
+            humidity = None
             
             # Create weather data dictionary
             weather_data = {
@@ -156,7 +141,7 @@ class IdokepScraper:
                 'wind_speed': None,  # No wind data available
                 'wind_direction': None,  # No wind direction available
                 'pressure': None,  # No pressure data available
-                'precipitation': 0.0,  # Default to 0 if no precipitation data
+                'precipitation': None,  # Do not invent a rainfall measurement
                 'condition': condition,
                 'alert': alert
             }

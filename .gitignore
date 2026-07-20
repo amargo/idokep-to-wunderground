@@ -1,3 +1,4 @@
 ﻿src/__pycache__
 *.log
 src/.env
+tests/__pycache__/test_weather_bridge.cpython-314.pyc

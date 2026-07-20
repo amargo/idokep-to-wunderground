@@ -9,9 +9,11 @@ import base64
 import logging
 import requests
 import os
+from datetime import datetime, timezone
 from io import BytesIO
 from bs4 import BeautifulSoup
 from PIL import Image
+from PIL import ImageOps
 import pytesseract
 
 # Tesseract konfigurálása Docker környezethez
@@ -24,6 +26,8 @@ class IdokepAutomataScraper:
     """
     Scraper for IdőKép automata pages.
     """
+
+    MAX_MEASUREMENT_AGE_SECONDS = 3600
     
     def __init__(self, automata_id):
         """
@@ -72,6 +76,7 @@ class IdokepAutomataScraper:
             # Decode base64 to image
             image_data = base64.b64decode(base64_data)
             image = Image.open(BytesIO(image_data))
+            image.load()
             
             # Return the image for OCR processing
             return image
@@ -93,8 +98,12 @@ class IdokepAutomataScraper:
             if not image:
                 return None
                 
-            # Process with pytesseract
-            # Using a simple configuration for numeric data
+            # The source images are intentionally very small, so enlarge and
+            # normalize them before passing them to Tesseract.
+            image = image.convert('L')
+            image = image.resize((image.width * 4, image.height * 4), Image.Resampling.LANCZOS)
+            image = ImageOps.autocontrast(image)
+
             text = pytesseract.image_to_string(
                 image, 
                 config='--psm 7 --oem 3 -c tessedit_char_whitelist="0123456789,.-"'
@@ -153,6 +162,40 @@ class IdokepAutomataScraper:
         except Exception as e:
             logger.error(f"Error extracting measurement time: {e}")
             return None
+
+    def _is_measurement_fresh(self, measurement_time):
+        """Return whether the source measurement is recent enough to send."""
+        if not measurement_time:
+            return True
+
+        try:
+            measured_at = datetime.fromisoformat(measurement_time.replace('Z', '+00:00'))
+            if measured_at.tzinfo is None:
+                measured_at = measured_at.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - measured_at.astimezone(timezone.utc)).total_seconds()
+            return age <= self.MAX_MEASUREMENT_AGE_SECONDS and age >= -300
+        except ValueError:
+            logger.warning("Ignoring invalid automata measurement timestamp: %s", measurement_time)
+            return False
+
+    @staticmethod
+    def _valid_value(field, value):
+        """Reject OCR output that cannot be a value for the selected field."""
+        if value is None:
+            return None
+
+        limits = {
+            'temperature': (-60, 70),
+            'dew_point': (-80, 60),
+            'humidity': (0, 100),
+            'precipitation_24h': (0, 1000),
+            'precipitation_intensity': (0, 500),
+        }
+        minimum, maximum = limits[field]
+        if minimum <= value <= maximum:
+            return value
+        logger.warning("Ignoring implausible OCR value for %s: %s", field, value)
+        return None
     
     def scrape(self):
         """
@@ -178,6 +221,9 @@ class IdokepAutomataScraper:
         
         # Extract measurement time
         weather_data['measurement_time'] = self._extract_measurement_time(soup)
+        if not self._is_measurement_fresh(weather_data['measurement_time']):
+            logger.error("Automata measurement is stale or has an invalid timestamp")
+            return None
         
         # Find all table rows
         rows = soup.select('table.table tr')
@@ -190,7 +236,7 @@ class IdokepAutomataScraper:
             if not header or not data_cell:
                 continue
                 
-            header_text = header.text.strip()
+            header_text = ' '.join(header.stripped_strings).casefold()
             
             # Extract image tag
             img_tag = data_cell.select_one('img')
@@ -201,17 +247,21 @@ class IdokepAutomataScraper:
                 ocr_text = self._process_image_with_ocr(image)
                 value = self._extract_numeric_value(ocr_text)
                 
-                # Map to the appropriate field based on header
-                if "Hőmérséklet" in header_text:
-                    weather_data['temperature'] = value
-                elif "Harmatpont" in header_text:
-                    weather_data['dew_point'] = value
-                elif "Páratartalom" in header_text:
-                    weather_data['humidity'] = value
+                # Map to the appropriate field based on the Hungarian label.
+                field = None
+                if "hőmérséklet" in header_text:
+                    field = 'temperature'
+                elif "harmatpont" in header_text:
+                    field = 'dew_point'
+                elif "páratartalom" in header_text:
+                    field = 'humidity'
                 elif "24 órás csapadék" in header_text:
-                    weather_data['precipitation_24h'] = value
-                elif "Csapadékintenzitás" in header_text:
-                    weather_data['precipitation_intensity'] = value
+                    field = 'precipitation_24h'
+                elif "csapadékintenzitás" in header_text:
+                    field = 'precipitation_intensity'
+
+                if field:
+                    weather_data[field] = self._valid_value(field, value)
         
         logger.info(f"Scraped automata data: {weather_data}")
         return weather_data

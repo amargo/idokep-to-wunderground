@@ -40,6 +40,9 @@ class WundergroundClient:
             
         # Convert IdőKép data format to Weather Underground format
         wu_data = self._convert_to_wunderground_format(weather_data)
+        if wu_data.get('tempf') is None:
+            logger.error("No valid air temperature to send to Weather Underground")
+            return False
         
         # Add authentication parameters
         params = {
@@ -56,11 +59,12 @@ class WundergroundClient:
             logger.info(f"Sending data to Weather Underground for station {self.station_id}")
             response = requests.get(self.BASE_URL, params=params, timeout=10)
             
-            if response.status_code == 200 and "success" in response.text.lower():
+            response_text = response.text.strip().lower()
+            if response.status_code == 200 and response_text == "success":
                 logger.info("Data successfully sent to Weather Underground")
                 return True
             else:
-                logger.error(f"Failed to send data: {response.text}")
+                logger.error(f"Failed to send data (HTTP {response.status_code}): {response.text[:200]}")
                 return False
                 
         except requests.RequestException as e:
@@ -79,47 +83,52 @@ class WundergroundClient:
         """
         wu_data = {}
         
-        # Temperature in Celsius - prefer air temperature, fallback to lake temperature if needed
-        if weather_data.get('temperature') is not None:
+        # Weather Underground expects the air temperature in Fahrenheit.
+        if self._is_valid_number(weather_data.get('temperature'), -80, 80):
             wu_data['tempf'] = self._celsius_to_fahrenheit(weather_data['temperature'])
-            wu_data['tempc'] = weather_data['temperature']
-        elif weather_data.get('lake_temperature') is not None:
-            # If we only have lake temperature, use that as a fallback
-            wu_data['tempf'] = self._celsius_to_fahrenheit(weather_data['lake_temperature'])
-            wu_data['tempc'] = weather_data['lake_temperature']
-            logger.info(f"Using lake temperature as fallback: {weather_data['lake_temperature']}°C")
         
         # Humidity
-        if weather_data.get('humidity') is not None:
+        if self._is_valid_number(weather_data.get('humidity'), 0, 100):
             wu_data['humidity'] = weather_data['humidity']
         
         # Barometric pressure in hPa
-        if weather_data.get('pressure') is not None:
+        if self._is_valid_number(weather_data.get('pressure'), 800, 1200):
             wu_data['baromin'] = self._hpa_to_inches(weather_data['pressure'])
+
+        if self._is_valid_number(weather_data.get('dew_point'), -100, 80):
+            wu_data['dewptf'] = self._celsius_to_fahrenheit(weather_data['dew_point'])
         
         # Wind speed in km/h
-        if weather_data.get('wind_speed') is not None:
+        if self._is_valid_number(weather_data.get('wind_speed'), 0, 500):
             wu_data['windspeedmph'] = self._kmh_to_mph(weather_data['wind_speed'])
         
         # Wind direction
         if weather_data.get('wind_direction') is not None:
-            wu_data['winddir'] = self._convert_wind_direction(weather_data['wind_direction'])
+            wind_direction = self._convert_wind_direction(weather_data['wind_direction'])
+            if wind_direction is not None:
+                wu_data['winddir'] = wind_direction
         
         # Precipitation in mm
-        if weather_data.get('precipitation') is not None:
+        if self._is_valid_number(weather_data.get('precipitation'), 0, 1000):
             wu_data['rainin'] = self._mm_to_inches(weather_data['precipitation'])
+
+        if self._is_valid_number(weather_data.get('precipitation_intensity'), 0, 500):
+            wu_data['rainin'] = self._mm_to_inches(weather_data['precipitation_intensity'])
+
+        if self._is_valid_number(weather_data.get('precipitation_24h'), 0, 1000):
+            wu_data['dailyrainin'] = self._mm_to_inches(weather_data['precipitation_24h'])
         
         # Weather condition as a string
         if weather_data.get('condition') is not None:
             wu_data['weather'] = weather_data['condition']
             
-        # Weather alert if available
-        if weather_data.get('alert') is not None:
-            wu_data['weatherAlert'] = weather_data['alert']
-            logger.info(f"Weather alert: {weather_data['alert']}")
-
-        
+        # weatherAlert is not part of the raw PWS upload protocol.
         return wu_data
+
+    @staticmethod
+    def _is_valid_number(value, minimum, maximum):
+        """Return whether a value is numeric and within a physical range."""
+        return isinstance(value, (int, float)) and minimum <= value <= maximum
     
     @staticmethod
     def _celsius_to_fahrenheit(celsius):
@@ -164,4 +173,4 @@ class WundergroundClient:
             'ÉNy': 315 # Northwest
         }
         
-        return direction_map.get(direction, 0)  # Default to North if unknown
+        return direction_map.get(direction)
